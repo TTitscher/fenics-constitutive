@@ -4,7 +4,9 @@ website
 
 *build*
 
-
+cpp.*.so
+*.egg-info/
+tags
 
 *.h5
 *.xdmf
