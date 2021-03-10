@@ -9,19 +9,22 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.8'
     - name: Install dependencies
       run: |
-        sudo apt update && sudo apt install -y pandoc fenics pybind11-dev
-        python -m pip install --upgrade pip
-        python -m pip install pytest numpy fenics
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        python -m pip install --user -e .
+        sudo apt update && sudo apt install -y pandoc pybind11-dev
+        sudo apt-get install -y --no-install-recommends software-properties-common
+        sudo add-apt-repository ppa:fenics-packages/fenics
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends fenics
+
+        pip3 install --upgrade pip
+        pip3 install pytest
+        pip3 install -r requirements.txt
+        pip3 install git+https://github.com/BAMresearch/fenics_helpers
+        pip3 install --user -e .
     - name: Run
       run: |
+        export PATH=/home/runner/.local/bin/:$PATH
         doit
         pytest
     - name: deploy

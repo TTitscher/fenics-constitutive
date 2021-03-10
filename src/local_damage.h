@@ -1,8 +1,18 @@
 #pragma once
-#include "interfaces.h"
+#include "linear_elastic.h"
 #include <cmath>
 
-class DamageLawExponential
+struct DamageLawInterface
+{
+    virtual std::pair<double, double> Evaluate(double kappa) const = 0;
+};
+
+struct StrainNormInterface
+{
+    virtual std::pair<double, Eigen::VectorXd> Evaluate(Eigen::VectorXd strain) const = 0;
+};
+
+class DamageLawExponential : public DamageLawInterface
 {
 public:
     DamageLawExponential(double k0, double alpha, double beta)
@@ -12,7 +22,7 @@ public:
     {
     }
 
-    std::pair<double, double> evaluate(double k) const
+    std::pair<double, double> Evaluate(double k) const override
     {
         if (k <= _k0)
             return {0., 0.};
@@ -93,7 +103,7 @@ Eigen::Matrix<double, 6, Eigen::Dynamic> T3D(double nu, Constraint c)
     return T;
 }
 
-class ModMisesEeq
+class ModMisesEeq : public StrainNormInterface
 {
 public:
     ModMisesEeq(double k, double nu, Constraint c)
@@ -105,7 +115,7 @@ public:
     {
     }
 
-    std::pair<double, Eigen::VectorXd> evaluate(Eigen::VectorXd strain) const
+    std::pair<double, Eigen::VectorXd> Evaluate(Eigen::VectorXd strain) const
     {
         // transformation to 3D and invariants
         const V<FULL> strain3D = _T3D * strain;
@@ -134,39 +144,37 @@ private:
 };
 
 
-class LocalDamage : public IpBase
+class LocalDamage : public MechanicsLaw
 {
 public:
-    LocalDamage(double E, double nu, Constraint c, double ft, double alpha, double gf, double k)
-        : _C(C(E, nu, c))
-        , _omega(ft / E, alpha, ft / gf)
-        , _eeq(k, nu, c)
+    LocalDamage(double E, double nu, Constraint c, std::shared_ptr<DamageLawInterface> omega,
+                std::shared_ptr<StrainNormInterface> strain_norm)
+        : MechanicsLaw(c)
+        , _C(C(E, nu, c))
+        , _omega(omega)
+        , _strain_norm(strain_norm)
+        , _kappa(1)
     {
     }
 
-    void resize(int n) override
+    void Resize(int n) override
     {
-        _kappa.resize(n);
+        _kappa.Resize(n);
     }
 
-    std::pair<Eigen::VectorXd, Eigen::MatrixXd> evaluate(const Eigen::VectorXd& strain, int i) override
+    std::pair<Eigen::VectorXd, Eigen::MatrixXd> Evaluate(const Eigen::VectorXd& strain, int i) override
     {
         double kappa, dkappa, omega, domega, eeq;
         Eigen::VectorXd deeq;
 
-        std::tie(eeq, deeq) = _eeq.evaluate(strain);
-        std::tie(kappa, dkappa) = evaluate_kappa(eeq, _kappa[i]);
-        std::tie(omega, domega) = _omega.evaluate(kappa);
+        std::tie(eeq, deeq) = _strain_norm->Evaluate(strain);
+        std::tie(kappa, dkappa) = EvaluateKappa(eeq, _kappa.GetScalar(i));
+        std::tie(omega, domega) = _omega->Evaluate(kappa);
 
         return {(1. - omega) * _C * strain, (1. - omega) * _C - _C * strain * domega * dkappa * deeq.transpose()};
     }
 
-    virtual int qdim() const override
-    {
-        return _C.rows();
-    }
-
-    std::pair<double, double> evaluate_kappa(double eeq, double kappa) const
+    std::pair<double, double> EvaluateKappa(double eeq, double kappa) const
     {
         if (eeq >= kappa)
             return {eeq, 1.};
@@ -174,18 +182,102 @@ public:
             return {kappa, 0};
     }
 
-    virtual void update(const Eigen::VectorXd& strain, int i) override
+    virtual void Update(const Eigen::VectorXd& strain, int i) override
     {
-        const double eeq = _eeq.evaluate(strain).first;
-        const double kappa = evaluate_kappa(eeq, _kappa[i]).first;
-        _kappa[i] = kappa;
+        const double eeq = _strain_norm->Evaluate(strain).first;
+        const double kappa = EvaluateKappa(eeq, _kappa.GetScalar(i)).first;
+        _kappa.Set(kappa, i);
+    }
+
+    Eigen::VectorXd Kappa() const
+    {
+        return _kappa.data;
     }
 
 
 private:
     Eigen::MatrixXd _C;
-    DamageLawExponential _omega;
-    ModMisesEeq _eeq;
-    Eigen::VectorXd _kappa;
+    std::shared_ptr<DamageLawInterface> _omega;
+    std::shared_ptr<StrainNormInterface> _strain_norm;
+    QValues _kappa;
+};
+
+class GradientDamage : public LawInterface
+{
+public:
+    GradientDamage(double E, double nu, Constraint c, std::shared_ptr<DamageLawInterface> omega,
+                   std::shared_ptr<StrainNormInterface> strain_norm)
+        : _C(C(E, nu, c))
+        , _omega(omega)
+        , _strain_norm(strain_norm)
+        , _kappa(1)
+    {
+    }
+
+    void DefineOutputs(std::vector<QValues>& out) const override
+    {
+        const int q = _C.rows();
+        out[EEQ] = QValues(1);
+        out[DEEQ] = QValues(q);
+        out[SIGMA] = QValues(q);
+        out[DSIGMA_DE] = QValues(q);
+        out[DSIGMA_DEPS] = QValues(q, q);
+    }
+
+    void DefineInputs(std::vector<QValues>& input) const override
+    {
+        const int q = _C.rows();
+        input[E] = QValues(1);
+        input[EPS] = QValues(q);
+    }
+
+    void Resize(int n) override
+    {
+        _kappa.Resize(n);
+    }
+
+    void Evaluate(const std::vector<QValues>& input, std::vector<QValues>& out, int i) override
+    {
+        double kappa, dkappa, omega, domega, eeq;
+        Eigen::VectorXd deeq;
+        auto strain = input[EPS].Get(i);
+
+        std::tie(kappa, dkappa) = EvaluateKappa(input[E].GetScalar(i), _kappa.GetScalar(i));
+        std::tie(omega, domega) = _omega->Evaluate(kappa);
+        std::tie(eeq, deeq) = _strain_norm->Evaluate(strain);
+
+        out[EEQ].Set(eeq, i);
+        out[SIGMA].Set((1. - omega) * _C * strain, i);
+        out[DEEQ].Set(deeq, i);
+        out[DSIGMA_DE].Set(-_C * strain * domega * dkappa, i);
+        out[DSIGMA_DEPS].Set((1. - omega) * _C, i);
+    }
+
+    std::pair<double, double> EvaluateKappa(double eeq, double kappa) const
+    {
+        if (eeq >= kappa)
+            return {eeq, 1.};
+        else
+            return {kappa, 0};
+    }
+
+    void Update(const std::vector<QValues>& input, int i) override
+    {
+        _kappa.Set(EvaluateKappa(input[E].GetScalar(i), _kappa.GetScalar(i)).first, i);
+    }
+
+    Eigen::VectorXd Kappa() const
+    {
+        return _kappa.data;
+    }
+
+
+private:
+    Eigen::MatrixXd _C;
+    std::shared_ptr<DamageLawInterface> _omega;
+    std::shared_ptr<StrainNormInterface> _strain_norm;
+
+    // history values
+    QValues _kappa;
 };
 

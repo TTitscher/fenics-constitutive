@@ -117,7 +117,7 @@ class TestPlate(unittest.TestCase):
         stress = StressSolution(plate_with_hole, degree=2)
         traction = dot(stress, n)
   
-        problem = c.MechanicsProblem(mesh, prm)
+        problem = c.MechanicsProblem(mesh, prm, c.LinearElastic(prm.E, prm.nu, prm.constraint))
         bc0 = DirichletBC(problem.Vd.sub(0), 0.0, boundary.plane_at(0, "x"))
         bc1 = DirichletBC(problem.Vd.sub(1), 0.0, boundary.plane_at(0, "y"))
         problem.set_bcs([bc0, bc1])
@@ -125,7 +125,6 @@ class TestPlate(unittest.TestCase):
         u = problem.solve() 
         
         disp = DisplacementSolution(plate_with_hole, degree=2)
-    
         error = errornorm(disp, u)
         self.assertLess(error, 1.e-6)
 

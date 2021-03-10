@@ -313,7 +313,7 @@ class GDM(NonlinearProblem):
         self.q_deeq_deps = Function(VQV, name="equivalent-strain-strain tangent")
 
         dd, de = TrialFunctions(self.Vu)
-        u_, e_ = TestFunctions(self.Vu)
+        d_, e_ = TestFunctions(self.Vu)
         d, e = split(self.u)
 
         try:
@@ -322,14 +322,15 @@ class GDM(NonlinearProblem):
             f_d = Constant(1.0)
 
         eps = self.mat.eps
-        self.R = f_d * inner(eps(u_), self.q_sigma) * dxm
+        self.R = f_d * inner(eps(d_), self.q_sigma) * dxm
         self.R += e_ * (e - self.q_eeq) * dxm
         self.R += dot(grad(e_), mat.l ** 2 * grad(e)) * dxm
 
-        self.dR = f_d * inner(eps(dd), self.q_dsigma_deps * eps(u_)) * dxm
-        self.dR += f_d * de * dot(self.q_dsigma_de, eps(u_)) * dxm
-        self.dR += inner(eps(dd), -self.q_deeq_deps * e_) * dxm
-        self.dR += de * e_ * dxm + dot(grad(de), mat.l ** 2 * grad(e_)) * dxm
+        self.dR = f_d * inner(eps(d_), self.q_dsigma_deps * eps(dd)) * dxm
+        self.dR += f_d * inner(eps(d_),  self.q_dsigma_de * de) * dxm
+        self.dR += e_ * (de - dot(self.q_deeq_deps, eps(dd))) * dxm
+        #∂grad(e)/∂e de = linear terms of grad(e+de) = grad(de)
+        self.dR += dot(grad(e_), mat.l ** 2 * (grad(de))) * dxm
 
         self.calculate_eps = LocalProjector(eps(d), VQV, dxm)
         self.calculate_e = LocalProjector(e, VQF, dxm)
@@ -639,10 +640,10 @@ def three_point_bending(problem=GDM, linear_solver=LUSolver("mumps")):
 
 
 if __name__ == "__main__":
-    assert gdm_error(200) < 1.0e-8
-    convergence_test()
+    # assert gdm_error(200) < 1.0e-8
+    # convergence_test()
     three_point_bending()
-    list_timings(TimingClear.keep, [TimingType.wall])
+    # list_timings(TimingClear.keep, [TimingType.wall])
 
 """
 Extensions

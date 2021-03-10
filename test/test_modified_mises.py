@@ -4,7 +4,6 @@ import numpy as np
 
 
 def cdf(f, x, delta):
-    f0 = f(x)
     f_cdf = np.empty_like(x)
     for i in range(len(x.T)):
         d = np.zeros_like(x)
@@ -17,7 +16,9 @@ class TestMises(unittest.TestCase):
     def random_cdf(self, constraint, k=10.0, nu=0.2):
         np.random.seed(6174)
         norm = ModMisesEeq(k, nu, constraint)
-        only_eeq = lambda x: norm.evaluate(x)[0]
+
+        def only_eeq(x):
+            return norm.evaluate(x)[0]
 
         for i in range(100):
             strain = np.random.random(q_dim(constraint))
@@ -37,8 +38,8 @@ class TestMises(unittest.TestCase):
 
     def test_zero(self):
         norm = ModMisesEeq(10, 0.2, Constraint.PLANE_STRESS)
-        eeq, deeq = norm.evaluate([0,0,0])
-        self.assertLess(eeq, 1.e-10)
+        eeq, deeq = norm.evaluate([0, 0, 0])
+        self.assertLess(eeq, 1.0e-10)
         self.assertFalse(np.any(np.isnan(deeq)))
 
     def test_1D(self):

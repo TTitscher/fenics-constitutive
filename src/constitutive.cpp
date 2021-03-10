@@ -1,9 +1,10 @@
 #include <pybind11/eigen.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
-#include <interfaces.h>
-#include <laws.h>
-#include <local_damage.h>
+#include "interfaces.h"
+#include "linear_elastic.h"
+#include "local_damage.h"
+#include "plasticity.h"
 
 namespace py = pybind11;
 
@@ -16,6 +17,9 @@ PYBIND11_MODULE(cpp, m)
 
     m.doc() = "Super awesome, super fast constitutive lib";
 
+    /*************************************************************************
+     **   ENUMS AND FREE METHODS
+     *************************************************************************/
     pybind11::enum_<Constraint>(m, "Constraint")
             .value("UNIAXIAL_STRAIN", Constraint::UNIAXIAL_STRAIN)
             .value("UNIAXIAL_STRESS", Constraint::UNIAXIAL_STRESS)
@@ -24,31 +28,96 @@ PYBIND11_MODULE(cpp, m)
             .value("FULL", Constraint::FULL)
             .value("3D", Constraint::FULL);
 
+    pybind11::enum_<Q>(m, "Q")
+            .value("SIGMA", Q::SIGMA)
+            .value("DSIGMA_DEPS", Q::DSIGMA_DEPS)
+            .value("EEQ", Q::EEQ)
+            .value("EPS", Q::EPS)
+            .value("E", Q::E)
+            .value("KAPPA", Q::KAPPA)
+            .value("DEEQ", Q::DEEQ)
+            .value("DSIGMA_DE", Q::DSIGMA_DE);
+
     m.def("g_dim", &Dim::G);
     m.def("q_dim", &Dim::Q);
 
-    pybind11::class_<IpBase> ipBase(m, "IpBase");
-    ipBase.def("evaluate", &IpBase::evaluate, py::arg("strain"), py::arg("i") = 0);
-    ipBase.def("update", &IpBase::update, py::arg("strain"), py::arg("i") = 0);
-    ipBase.def("resize", &IpBase::resize, py::arg("n"));
+    /*************************************************************************
+     **   IPLOOP AND MAIN INTERFACES
+     *************************************************************************/
+
+    pybind11::class_<IpLoop> ipLoop(m, "IpLoop");
+    ipLoop.def(pybind11::init<>());
+    ipLoop.def("add_law", py::overload_cast<std::shared_ptr<MechanicsLaw>, std::vector<int>>(&IpLoop::AddLaw),
+               py::arg("law"), py::arg("ips") = std::vector<int>());
+    ipLoop.def("add_law", py::overload_cast<std::shared_ptr<LawInterface>, std::vector<int>>(&IpLoop::AddLaw),
+               py::arg("law"), py::arg("ips") = std::vector<int>());
+    ipLoop.def("evaluate", &IpLoop::Evaluate, py::arg("eps"), py::arg("e") = Eigen::VectorXd());
+    ipLoop.def("update", &IpLoop::Update, py::arg("eps"), py::arg("e") = Eigen::VectorXd());
+    ipLoop.def("resize", &IpLoop::Resize);
+    ipLoop.def("get", &IpLoop::Get);
+    ipLoop.def("required_inputs", &IpLoop::RequiredInputs);
+
+    pybind11::class_<LawInterface, std::shared_ptr<LawInterface>> law(m, "LawInterface");
+
+    pybind11::class_<MechanicsLaw, std::shared_ptr<MechanicsLaw>> mechanicsLaw(m, "MechanicsLaw");
+    mechanicsLaw.def("evaluate", &MechanicsLaw::Evaluate, py::arg("strain"), py::arg("i") = 0);
+    mechanicsLaw.def("update", &MechanicsLaw::Update, py::arg("strain"), py::arg("i") = 0);
+    mechanicsLaw.def("resize", &MechanicsLaw::Resize, py::arg("n"));
+
+    /*************************************************************************
+     **   DAMAGE LAWS
+     *************************************************************************/
+
+    pybind11::class_<DamageLawInterface, std::shared_ptr<DamageLawInterface>> damageLaw(m, "DamageLawInterface");
+    damageLaw.def("evaluate", &DamageLawInterface::Evaluate);
+
+    pybind11::class_<DamageLawExponential, std::shared_ptr<DamageLawExponential>, DamageLawInterface> damageExponential(
+            m, "DamageLawExponential");
+    damageExponential.def(pybind11::init<double, double, double>(), py::arg("k0"), py::arg("alpha"), py::arg("beta"));
 
 
-    pybind11::class_<LinearElastic, IpBase> linearElastic(m, "LinearElastic");
-    linearElastic.def(pybind11::init<double, double, Constraint>());
+    /*************************************************************************
+     **   STRAIN NORMS
+     *************************************************************************/
 
-    pybind11::class_<Base> base(m, "Base");
-    base.def(pybind11::init<IpBase&>());
-    base.def("evaluate", &Base::evaluate);
-    base.def("update", &Base::update);
-    base.def("resize", &Base::resize);
-    base.def_readwrite("stress", &Base::_stress);
-    base.def_readwrite("dstress", &Base::_dstress);
+    pybind11::class_<StrainNormInterface, std::shared_ptr<StrainNormInterface>> strainNorm(m, "StrainNormInterface");
+    strainNorm.def("evaluate", &StrainNormInterface::Evaluate);
 
-    pybind11::class_<ModMisesEeq> modMises(m, "ModMisesEeq");
-    modMises.def(pybind11::init<double, double, Constraint>());
-    modMises.def("evaluate", &ModMisesEeq::evaluate);
+    pybind11::class_<ModMisesEeq, std::shared_ptr<ModMisesEeq>, StrainNormInterface> modMises(m, "ModMisesEeq");
+    modMises.def(pybind11::init<double, double, Constraint>(), py::arg("k"), py::arg("nu"), py::arg("constraint"));
 
-    pybind11::class_<LocalDamage, IpBase> localDamage(m, "LocalDamage");
-    localDamage.def(pybind11::init<double, double, Constraint, double, double, double, double>());
-    localDamage.def("evaluate_kappa", &LocalDamage::evaluate_kappa);
+    /*************************************************************************
+     **   "PURE" MECHANICS LAWS
+     *************************************************************************/
+
+    pybind11::class_<LinearElastic, std::shared_ptr<LinearElastic>, MechanicsLaw> linearElastic(m, "LinearElastic");
+    linearElastic.def(pybind11::init<double, double, Constraint>(), py::arg("E"), py::arg("nu"), py::arg("constraint"));
+
+
+    pybind11::class_<LocalDamage, std::shared_ptr<LocalDamage>, MechanicsLaw> local(m, "LocalDamage");
+    local.def(pybind11::init<double, double, Constraint, std::shared_ptr<DamageLawInterface>,
+                             std ::shared_ptr<StrainNormInterface>>());
+    local.def("kappa", &LocalDamage::Kappa);
+
+    /*************************************************************************
+     **   GRADIENT DAMAGE LAW
+     *************************************************************************/
+
+    pybind11::class_<GradientDamage, std::shared_ptr<GradientDamage>, LawInterface> gdm(m, "GradientDamage");
+    gdm.def(pybind11::init<double, double, Constraint, std::shared_ptr<DamageLawInterface>,
+                           std ::shared_ptr<StrainNormInterface>>());
+    gdm.def("kappa", &GradientDamage::Kappa);
+
+    /*************************************************************************
+     **   PLASTICITY
+     *************************************************************************/
+    pybind11::class_<NormVM> normVM(m, "NormVM");
+    normVM.def(pybind11::init<Constraint>());
+    normVM.def("__call__", &NormVM::Call);
+    normVM.def_readonly("P", &NormVM::_P);
+    
+    pybind11::class_<RateIndependentHistory> RateIndependentHistory(m, "RateIndependentHistory");
+    RateIndependentHistory.def(pybind11::init<>());
+    RateIndependentHistory.def("__call__", &RateIndependentHistory::Call);
+//     RateIndependentHistory.def_readonly("P", &RateIndependentHistory::_p);
 }

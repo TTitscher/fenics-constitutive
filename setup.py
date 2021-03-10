@@ -8,6 +8,8 @@ from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
 from distutils.version import LooseVersion
 
+with open("README.md", "r") as fh:
+    long_description = fh.read()
 
 class CMakeExtension(Extension):
     def __init__(self, name, sourcedir=''):
@@ -58,14 +60,22 @@ class CMakeBuild(build_ext):
 
 setup(
     name='constitutive',
-    version='0.0.1',
-    install_requires=["fenics_helpers @ https://github.com/nutofem/fenics_helpers/tarball/use_find_packages"],
+    version='0.1',
     author='Thomas Titscher',
     author_email='thomas.titscher@gmail.com',
-    description='fenics-constitutive cpp module',
-    long_description='',
+    keywords="FEniCS c++ constitutive",
+    description="Complex constitutive models beyond the FEniCS UFL.",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     ext_modules=[CMakeExtension('constitutive.cpp')],
     cmdclass=dict(build_ext=CMakeBuild),
     zip_safe=False,
+    python_requires=">=3",
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
+    url="https://github.com/BAMresearch/fenics-constitutive",
     packages=["constitutive"],
 )
