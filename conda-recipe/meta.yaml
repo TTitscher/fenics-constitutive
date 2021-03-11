@@ -1,0 +1,52 @@
+{% set name = "constitutive" %}
+{% set version = "0.1" %}
+
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  git_url: https://github.com/BAMresearch/fenics-constitutive
+  git_tag: cpp
+
+build:
+  number: 0
+  skip: true   # [py2k]
+  script: {{ PYTHON }} -m pip install . -vv
+
+requirements:
+  build:
+    - {{ compiler('c') }}
+
+  host:
+    - pip
+    - python
+
+  run:
+    - python
+    - numpy >=1.9
+    - fenics=2019.1.0
+    - matplotlib  
+    - fenics_helpers
+
+test:
+  imports:
+    - constitutive
+    - dolfin
+  source_files:
+    - test
+  requires:
+    - pytest
+  commands:
+    - pytest test
+
+about:
+  home: https://github.com/BAMresearch/fenics-constitutive
+  summary: Complex constitutive models beyond the FEniCS UFL.
+  license: MIT License
+  license_file: LICENSE
+
+extra:
+  recipe-maintainers:
+    - pdiercks
