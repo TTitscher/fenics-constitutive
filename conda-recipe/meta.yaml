@@ -8,7 +8,7 @@ package:
 
 source:
   git_url: https://github.com/BAMresearch/fenics-constitutive
-  git_tag: cpp
+  git_tag: conda-recipe
 
 build:
   number: 0
@@ -22,11 +22,15 @@ requirements:
   host:
     - pip
     - python
+    - cmake >=3.5
+    - eigen
+    - pybind11
 
   run:
     - python
     - numpy >=1.9
     - fenics=2019.1.0
+    - mshr=2019.1.0
     - matplotlib  
     - fenics_helpers
 
@@ -44,7 +48,7 @@ test:
 about:
   home: https://github.com/BAMresearch/fenics-constitutive
   summary: Complex constitutive models beyond the FEniCS UFL.
-  license: MIT License
+  license: MIT
   license_file: LICENSE
 
 extra:
