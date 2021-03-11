@@ -16,62 +16,82 @@ def show_loading(loading, t0=0.0, t1=1.0, N=1000):
     plt.plot(ts, bcs)
     plt.show()
 
+
 """
 ######################################################
 ##             ABBAS PLASTICITY MODEL BEGIN
 ######################################################
 """
 
-def constitutive_coeffs(E=1000, noo=0.0, constraint='PLANE_STRESS'):
-    lamda=(E*noo/(1+noo))/(1-2*noo)
-    mu=E/(2*(1+noo))
-    if constraint=='PLANE_STRESS':
-        lamda = 2*mu*lamda/(lamda+2*mu)
+
+def constitutive_coeffs(E=1000, noo=0.0, constraint="PLANE_STRESS"):
+    lamda = (E * noo / (1 + noo)) / (1 - 2 * noo)
+    mu = E / (2 * (1 + noo))
+    if constraint == "PLANE_STRESS":
+        lamda = 2 * mu * lamda / (lamda + 2 * mu)
     return mu, lamda
 
-class ElasticConstitutive():
+
+class ElasticConstitutive:
     def __init__(self, E, noo, constraint):
         self.E = E
         self.noo = noo
         self.constraint = constraint
         self.ss_dim = c.q_dim(constraint)
-        
+
         if self.ss_dim == 1:
             self.D = np.array([self.E])
         else:
-            self.mu, self.lamda = constitutive_coeffs(E=self.E, noo=self.noo, constraint=constraint)
+            self.mu, self.lamda = constitutive_coeffs(
+                E=self.E, noo=self.noo, constraint=constraint
+            )
             _fact = 1
             if self.ss_dim == 3:
-                self.D = (self.E / (1 - self.noo ** 2)) * np.array([ [1, self.noo, 0], [self.noo, 1, 0], [0, 0, _fact * 0.5 * (1-self.noo) ] ])
+                self.D = (self.E / (1 - self.noo ** 2)) * np.array(
+                    [
+                        [1, self.noo, 0],
+                        [self.noo, 1, 0],
+                        [0, 0, _fact * 0.5 * (1 - self.noo)],
+                    ]
+                )
             elif self.ss_dim == 4:
-                self.D = np.array([
+                self.D = np.array(
+                    [
                         [2 * self.mu + self.lamda, self.lamda, self.lamda, 0],
                         [self.lamda, 2 * self.mu + self.lamda, self.lamda, 0],
                         [self.lamda, self.lamda, 2 * self.mu + self.lamda, 0],
                         [0, 0, 0, _fact * self.mu],
-                    ])
+                    ]
+                )
             elif self.ss_dim == 6:
-                self.D = np.array([
+                self.D = np.array(
+                    [
                         [2 * self.mu + self.lamda, self.lamda, self.lamda, 0, 0, 0],
                         [self.lamda, 2 * self.mu + self.lamda, self.lamda, 0, 0, 0],
                         [self.lamda, self.lamda, 2 * self.mu + self.lamda, 0, 0, 0],
                         [0, 0, 0, _fact * self.mu, 0, 0],
                         [0, 0, 0, 0, _fact * self.mu, 0],
                         [0, 0, 0, 0, 0, _fact * self.mu],
-                    ])
+                    ]
+                )
+
 
 class RateIndependentHistory_PlasticWork(c.RateIndependentHistory):
     def __init__(self, yield_function):
         self.yf = yield_function
+
         def p_and_diffs(sigma, kappa):
             _, m, dm, _, mk = self.yf(sigma, kappa)
             p = np.array([[np.dot(sigma, m)]])
             dp_dsig = (m + dm.T @ sigma).reshape((1, -1))
             dp_dk = np.array([[np.dot(sigma, mk)]])
             return p, dp_dsig, dp_dk
+
         self.p_and_diffs = p_and_diffs
+
     def __call__(self, sigma, kappa):
         return self.p_and_diffs(sigma, kappa)
+
 
 class PlasticConsitutivePerfect(ElasticConstitutive):
     def __init__(self, E, nu, constraint, yf):
@@ -84,8 +104,8 @@ class PlasticConsitutivePerfect(ElasticConstitutive):
         """
         super().__init__(E=E, noo=nu, constraint=constraint)
         self.yf = yf
-        assert(self.ss_dim == self.yf.ss_dim)
-    
+        assert self.ss_dim == self.yf.ss_dim
+
     def correct_stress(self, sig_tr, k0=0, _Ct=True, tol=1e-9, max_iters=20):
         """
         sig_tr: trial (predicted) stress
@@ -96,45 +116,50 @@ class PlasticConsitutivePerfect(ElasticConstitutive):
             Ct: corrected stiffness matrix
             m: flow vector (e.g. normal vector to the yield surface, if self.yf is associative)
         """
-        
+
         ### WAY 1 ### Using Jacobian matrix to solve residuals (of the return mapping algorithm) in a coupled sense
         f, m, dm, _, _ = self.yf(sig_tr)
-        if f > 0: # do return mapping
+        if f > 0:  # do return mapping
             Ct = None
             _d = len(sig_tr)
             # initial values of unknowns (we add 0.0 to something to have a copy regardless of type (float or np.array))
             sig_c = sig_tr + 0.0
             dl = 0.0
             # compute residuals of return-mapping (backward Euler)
-            d_eps_p = dl * m # change in plastic strain
+            d_eps_p = dl * m  # change in plastic strain
             es = sig_c - sig_tr + self.D @ d_eps_p
             ef = f
             e_norm = np.linalg.norm(np.append(es, ef))
             _it = 0
-            while e_norm > tol and _it<=max_iters:
-                A1 = np.append( np.eye(_d) + dl * self.D @ dm, (self.D @ m).reshape((-1,1)), axis=1 )
-                A2 = np.append(m, 0).reshape((1,-1))
+            while e_norm > tol and _it <= max_iters:
+                A1 = np.append(
+                    np.eye(_d) + dl * self.D @ dm, (self.D @ m).reshape((-1, 1)), axis=1
+                )
+                A2 = np.append(m, 0).reshape((1, -1))
                 Jac = np.append(A1, A2, axis=0)
                 dx = np.linalg.solve(Jac, np.append(es, ef))
-                sig_c -= dx[0:_d]     
+                sig_c -= dx[0:_d]
                 dl -= dx[_d:]
                 f, m, dm, _, _ = self.yf(sig_c)
-                d_eps_p = dl * m # change in plastic strain
+                d_eps_p = dl * m  # change in plastic strain
                 es = sig_c - sig_tr + self.D @ d_eps_p
                 ef = f
                 e_norm = np.linalg.norm(np.append(es, ef))
                 _it += 1
             # after converging return-mapping:
             if _Ct:
-                A1 = np.append( np.eye(_d) + dl * self.D @ dm, (self.D @ m).reshape((-1,1)), axis=1 )
-                A2 = np.append(m, 0).reshape((1,-1))
+                A1 = np.append(
+                    np.eye(_d) + dl * self.D @ dm, (self.D @ m).reshape((-1, 1)), axis=1
+                )
+                A2 = np.append(m, 0).reshape((1, -1))
                 Jac = np.append(A1, A2, axis=0)
                 inv_Jac = np.linalg.inv(Jac)
                 Ct = inv_Jac[np.ix_(range(_d), range(_d))] @ self.D
             return sig_c, Ct, k0, d_eps_p
-        else: # still elastic zone
-            return sig_tr, self.D, k0, 0.0        
-    
+        else:  # still elastic zone
+            return sig_tr, self.D, k0, 0.0
+
+
 class PlasticConsitutiveRateIndependentHistory(PlasticConsitutivePerfect):
     def __init__(self, E, nu, constraint, yf, ri):
         """
@@ -143,9 +168,9 @@ class PlasticConsitutiveRateIndependentHistory(PlasticConsitutivePerfect):
             kappa_dot = lamda_dot * p(sigma, kappa), where "p" is a plastic modulus function
         """
         super().__init__(E, nu, constraint, yf)
-        assert(isinstance(ri, c.RateIndependentHistory))
-        self.ri = ri # ri: rate-independent
-    
+        assert isinstance(ri, c.RateIndependentHistory)
+        self.ri = ri  # ri: rate-independent
+
     def correct_stress(self, sig_tr, k0=0.0, _Ct=True, tol=1e-9, max_iters=20):
         """
         overwritten to the superclass'
@@ -153,10 +178,10 @@ class PlasticConsitutiveRateIndependentHistory(PlasticConsitutivePerfect):
             kappa_dot = lamda_dot * self.ri.p
         , for the evolution of the history variable(s) k
         """
-        
+
         ### Solve residuals (of the return mapping algorithm) equal to ZERO, in a coupled sense (using Jacobian matrix based on backward Euler)
         f, m, dm, fk, _ = self.yf(sig_tr, k0)
-        if f > 0: # do return mapping
+        if f > 0:  # do return mapping
             Ct = None
             _d = len(sig_tr)
             # initial values of unknowns (we add 0.0 to something to have a copy regardless of type (float or np.array))
@@ -164,7 +189,7 @@ class PlasticConsitutiveRateIndependentHistory(PlasticConsitutivePerfect):
             k = k0 + 0.0
             dl = 0.0
             # compute residuals of return-mapping (backward Euler)
-            d_eps_p = dl * m # change in plastic strain
+            d_eps_p = dl * m  # change in plastic strain
             es = sig_c - sig_tr + self.D @ d_eps_p
             p, dp_dsig, dp_dk = self.ri(sig_c, k)
             if max(dp_dsig.shape) != _d:
@@ -173,18 +198,23 @@ class PlasticConsitutiveRateIndependentHistory(PlasticConsitutivePerfect):
             ef = f
             e_norm = np.linalg.norm(np.append(np.append(es, ek), ef))
             _it = 0
-            while e_norm > tol and _it<=max_iters:
-                A1 = np.append( np.append(np.eye(_d) + dl * self.D @ dm, np.zeros((_d,1)), axis=1) \
-                               , (self.D @ m).reshape((-1,1)), axis=1 )
-                A2 = np.append(np.append(- dl * dp_dsig, 1 - dl * dp_dk, axis=1), -p, axis=1)
-                A3 = np.append(np.append(m, fk), 0).reshape((1,-1))
+            while e_norm > tol and _it <= max_iters:
+                A1 = np.append(
+                    np.append(np.eye(_d) + dl * self.D @ dm, np.zeros((_d, 1)), axis=1),
+                    (self.D @ m).reshape((-1, 1)),
+                    axis=1,
+                )
+                A2 = np.append(
+                    np.append(-dl * dp_dsig, 1 - dl * dp_dk, axis=1), -p, axis=1
+                )
+                A3 = np.append(np.append(m, fk), 0).reshape((1, -1))
                 Jac = np.append(np.append(A1, A2, axis=0), A3, axis=0)
                 dx = np.linalg.solve(Jac, np.append(np.append(es, ek), ef))
-                sig_c -= dx[0:_d]     
-                k -= dx[_d:_d+1]
-                dl -= dx[_d+1:]
+                sig_c -= dx[0:_d]
+                k -= dx[_d : _d + 1]
+                dl -= dx[_d + 1 :]
                 f, m, dm, fk, _ = self.yf(sig_c, k)
-                d_eps_p = dl * m # change in plastic strain
+                d_eps_p = dl * m  # change in plastic strain
                 es = sig_c - sig_tr + self.D @ d_eps_p
                 p, dp_dsig, dp_dk = self.ri(sig_c, k)
                 if max(dp_dsig.shape) != _d:
@@ -195,25 +225,31 @@ class PlasticConsitutiveRateIndependentHistory(PlasticConsitutivePerfect):
                 _it += 1
             # after converging return-mapping:
             if _Ct:
-                A1 = np.append( np.append(np.eye(_d) + dl * self.D @ dm, np.zeros((_d,1)), axis=1) \
-                               , (self.D @ m).reshape((-1,1)), axis=1 )
-                A2 = np.append(np.append(- dl * dp_dsig, 1 - dl * dp_dk, axis=1), -p, axis=1)
-                A3 = np.append(np.append(m, fk), 0).reshape((1,-1))
+                A1 = np.append(
+                    np.append(np.eye(_d) + dl * self.D @ dm, np.zeros((_d, 1)), axis=1),
+                    (self.D @ m).reshape((-1, 1)),
+                    axis=1,
+                )
+                A2 = np.append(
+                    np.append(-dl * dp_dsig, 1 - dl * dp_dk, axis=1), -p, axis=1
+                )
+                A3 = np.append(np.append(m, fk), 0).reshape((1, -1))
                 Jac = np.append(np.append(A1, A2, axis=0), A3, axis=0)
                 inv_Jac = np.linalg.inv(Jac)
                 Ct = inv_Jac[np.ix_(range(_d), range(_d))] @ self.D
             return sig_c, Ct, k, d_eps_p
-        else: # still elastic zone
+        else:  # still elastic zone
             return sig_tr, self.D, k0, 0.0
+
 
 class Yield_VM:
     def __init__(self, y0, constraint, H=0):
-        self.y0 = y0 # yield stress
+        self.y0 = y0  # yield stress
         self.constraint = constraint
         self.ss_dim = c.q_dim(constraint)
-        self.H = H # isotropic hardening modulus
+        self.H = H  # isotropic hardening modulus
         self.vm_norm = c.NormVM(self.constraint)
-        
+
     def __call__(self, stress, kappa=0):
         """
         Evaluate the yield function quantities at a specific stress level (as a vector):
@@ -225,20 +261,25 @@ class Yield_VM:
         The given stress vector must be consistent with self.ss_dim
         kappa: history variable(s), here related to isotropic hardening
         """
-        assert (len(stress) == self.ss_dim)
+        assert len(stress) == self.ss_dim
         se, m = self.vm_norm(stress)
         f = se - (self.y0 + self.H * kappa)
-        fk = - self.H
-        if self.ss_dim==1:
-            dm = 0.0 # no dependency on "self.H"
+        fk = -self.H
+        if self.ss_dim == 1:
+            dm = 0.0  # no dependency on "self.H"
             mk = 0.0
         else:
-            if se ==0:
-                dm = None # no needed in such a case
+            if se == 0:
+                dm = None  # no needed in such a case
             else:
-                dm = (6 * se * self.vm_norm.P - 6 * np.outer(self.vm_norm.P @ stress, m)) / (4 * se ** 2) # no dependency on "self.H"
+                dm = (
+                    6 * se * self.vm_norm.P - 6 * np.outer(self.vm_norm.P @ stress, m)
+                ) / (
+                    4 * se ** 2
+                )  # no dependency on "self.H"
             mk = np.array(len(stress) * [0.0])
         return f, np.atleast_1d(m), np.atleast_2d(dm), fk, np.atleast_1d(mk)
+
 
 """
 ######################################################
@@ -253,13 +294,13 @@ class Plasticity:
         self.q = mat.ss_dim
 
     def add_law(self, _):
-        pass # just to match the c++ interface
+        pass  # just to match the c++ interface
 
-    def resize(self, n):  
+    def resize(self, n):
         self.n = n
         q = 3
         self.stress = np.zeros((self.n, q))
-        self.dstress = np.zeros((self.n,  q * q))
+        self.dstress = np.zeros((self.n, q * q))
         self.eps_p = np.zeros((self.n, q))
         self.kappa1 = np.zeros(self.n)
         self.kappa = np.zeros(self.n)
@@ -281,12 +322,15 @@ class Plasticity:
             strain = all_strains[q * i : q * i + q]
             sig_tr_i = self.mat.D @ (strain - self.eps_p[i])
 
-            sig_cr, Ct, k, d_eps_p = self.mat.correct_stress(sig_tr=sig_tr_i, k0=self.kappa[i])
+            sig_cr, Ct, k, d_eps_p = self.mat.correct_stress(
+                sig_tr=sig_tr_i, k0=self.kappa[i]
+            )
             # assignments:
-            self.kappa1[i] = k # update history variable(s)
+            self.kappa1[i] = k  # update history variable(s)
             self.stress[i] = sig_cr
             self.dstress[i] = Ct.flatten()
-            self.deps_p[i] = d_eps_p # store change in the cumulated plastic strain
+            self.deps_p[i] = d_eps_p  # store change in the cumulated plastic strain
+
 
 class TestPlasticity(unittest.TestCase):
     def test_bending(self):
@@ -312,7 +356,7 @@ class TestPlasticity(unittest.TestCase):
         prm.nu = 0.3
         prm.deg_d = 3
         prm.deg_q = 4
-        law = None # for now, plays no role.
+        law = None  # for now, plays no role.
 
         mesh = df.RectangleMesh(
             df.Point(0, 0),
@@ -324,7 +368,9 @@ class TestPlasticity(unittest.TestCase):
         yf = Yield_VM(prm.sig0, prm.constraint, H=prm.H)
         ri = c.RateIndependentHistory()
         # mat = PlasticConsitutivePerfect(prm.E, prm.nu, prm.constraint, yf=yf)
-        mat = PlasticConsitutiveRateIndependentHistory(prm.E, prm.nu, prm.constraint, yf=yf, ri=ri)
+        mat = PlasticConsitutiveRateIndependentHistory(
+            prm.E, prm.nu, prm.constraint, yf=yf, ri=ri
+        )
         plasticity = Plasticity(mat)
 
         problem = c.MechanicsProblem(mesh, prm, law=law, iploop=plasticity)
@@ -354,7 +400,7 @@ class TestPlasticity(unittest.TestCase):
             return solver.solve(problem, problem.u.vector())
 
         ld = c.helper.LoadDisplacementCurve(bcs[0])
-        ld.show()
+        # ld.show()
 
         if not ld.is_root:
             set_log_level(LogLevel.ERROR)
